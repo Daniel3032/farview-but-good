@@ -90,7 +90,7 @@ final class FarViewSession implements SessionHooks {
         this.plugin = plugin;
         this.dimension = dimension;
         this.serverRadius = serverRadius;
-        this.quality = new ConnectionQuality(channel, ratePolicy);
+        this.quality = new ConnectionQuality(channel, ratePolicy, plugin.globalRate());
         this.rateCapKbps = ratePolicy.maxKbps();
         Location eye = player.getEyeLocation();
         this.eyeX = eye.getX();

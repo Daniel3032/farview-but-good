@@ -44,6 +44,7 @@ public final class FarViewPlugin extends JavaPlugin {
     private FarViewPreferences preferences;
     private FarViewListener listener;
     private FakeChunkCache cache;
+    private final GlobalRateLimiter globalRate = new GlobalRateLimiter();
 
     private ScheduledExecutorService scheduler;
     private ExecutorService ioPool;
@@ -51,6 +52,7 @@ public final class FarViewPlugin extends JavaPlugin {
     FarViewSettings settings() { return settings; }
     FarViewPreferences preferences() { return preferences; }
     FarViewNms nms() { return nms; }
+    GlobalRateLimiter globalRate() { return globalRate; }
 
     @Override
     public void onEnable() {
@@ -121,6 +123,7 @@ public final class FarViewPlugin extends JavaPlugin {
 
     private void start() {
         this.settings = loadSettings();
+        globalRate.configure(settings.rate().globalMaxKbps());
         if (!settings.enabled()) {
             logger.info("disabled in config");
             return;

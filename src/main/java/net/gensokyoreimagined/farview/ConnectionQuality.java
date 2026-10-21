@@ -35,6 +35,7 @@ final class ConnectionQuality {
     private static final long KB = 1024L;
 
     private final Channel channel;
+    private final GlobalRateLimiter global;
     private volatile FarViewSettings.RatePolicy policy;
 
     private double rttMs;
@@ -67,8 +68,9 @@ final class ConnectionQuality {
 
     private volatile Snapshot snapshot = new Snapshot(-1, 0, 0, 0, true, false);
 
-    public ConnectionQuality(Channel channel, FarViewSettings.RatePolicy policy) {
+    public ConnectionQuality(Channel channel, FarViewSettings.RatePolicy policy, GlobalRateLimiter global) {
         this.channel = channel;
+        this.global = global;
         this.policy = policy;
         this.budgetBytesPerSec = policy.defaultKbps() * (double) KB;
         long now = System.nanoTime();
@@ -100,6 +102,7 @@ final class ConnectionQuality {
 
     public void onWireBytes(int bytes) {
         wireWindowBytes.addAndGet(bytes);
+        global.onWireBytes(bytes);
         long floor = -(long) (budgetBytesPerSec * MAX_DEBT_SECONDS);
         long after = tokenBytes.addAndGet(-bytes);
         if (after < floor) tokenBytes.compareAndSet(after, floor);
@@ -124,8 +127,10 @@ final class ConnectionQuality {
         if (!has) {
             tickLimited = true;
             windowLimited = true;
+            return false;
         }
-        return has;
+        // A server-wide stop is not this player's limit; it must not feed the per-player bandwidth model.
+        return global.hasTokens();
     }
 
     public void tick(FarViewSettings.RatePolicy currentPolicy, boolean auto, int capKbps) {
