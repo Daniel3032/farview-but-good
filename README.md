@@ -4,6 +4,8 @@ Paper plugin for 1.21.8, 1.21.11, 26.1, 26.2 and 26.3 (Folia on the versions Fol
 
 It reads already-generated chunks straight from the world's region files and sends them to the client as chunk packets over netty. The server never loads, ticks, or generates them. Fake chunks are a disk snapshot: no entities and no block updates until the player walks into the real view distance. Only chunks that are generated, saved and lit are sent, and players still need to raise their own client render distance.
 
+On 26.2 and 26.3, when Paper anti-xray is enabled for a world, every block in its `hidden-blocks` list is replaced in fake chunks below its `max-block-height`, with the stone Paper's HIDE mode uses (stone, deepslate below Y 0, netherrack, end stone). Exposed ores are replaced too. Paper's own anti-xray never sees fake chunks, so without this they would show ores in the clear.
+
 It is on for every player by default at `default-view-distance` (16), capped at the player's own client render distance plus one. A player can pick any radius up to `max-view-distance` with `/farview distance`, or turn it off for themselves.
 
 Per-player send rate adapts to measured ping, jitter and netty backpressure, or a player can pin a fixed speed.

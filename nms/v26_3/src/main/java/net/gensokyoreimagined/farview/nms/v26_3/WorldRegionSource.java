@@ -1,6 +1,8 @@
 package net.gensokyoreimagined.farview.nms.v26_3;
 
+import io.papermc.paper.configuration.WorldConfiguration;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import net.gensokyoreimagined.farview.nms.BlockEntityPolicy;
 import net.gensokyoreimagined.farview.nms.ChunkSource;
 import net.gensokyoreimagined.farview.nms.PreparedChunk;
@@ -11,10 +13,14 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.PalettedContainerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Set;
 import java.util.function.Consumer;
 
 final class WorldRegionSource implements ChunkSource {
@@ -26,6 +32,12 @@ final class WorldRegionSource implements ChunkSource {
     private final RegistryAccess registryAccess;
     private final HolderGetter<Biome> biomeLookup;
     private final Consumer<String> skipLog;
+
+    // Paper anti-xray never sees fake chunks, so its hidden blocks are replaced here instead.
+    private final Set<Block> antiXrayHidden;
+    private final int antiXrayMaxBlockY;
+    private final BlockState antiXrayReplacement;
+    private final BlockState antiXrayReplacementBelowZero;
 
     private final int readerCacheSize;
     private final Long2ObjectLinkedOpenHashMap<RegionReader> readers = new Long2ObjectLinkedOpenHashMap<>();
@@ -40,6 +52,17 @@ final class WorldRegionSource implements ChunkSource {
         this.biomeLookup = this.registryAccess.lookupOrThrow(Registries.BIOME);
         this.readerCacheSize = Math.max(1, readerCacheSize);
         this.skipLog = skipLog;
+
+        WorldConfiguration.Anticheat.AntiXray antiXray = level.paperConfig().anticheat.antiXray;
+        this.antiXrayHidden = antiXray.enabled ? new ReferenceOpenHashSet<>(antiXray.hiddenBlocks) : Set.of();
+        this.antiXrayMaxBlockY = antiXray.maxBlockHeight >> 4 << 4;
+        BlockState replacement = switch (level.getWorld().getEnvironment()) {
+            case NETHER -> Blocks.NETHERRACK.defaultBlockState();
+            case THE_END -> Blocks.END_STONE.defaultBlockState();
+            default -> null;
+        };
+        this.antiXrayReplacement = replacement != null ? replacement : Blocks.STONE.defaultBlockState();
+        this.antiXrayReplacementBelowZero = replacement != null ? replacement : Blocks.DEEPSLATE.defaultBlockState();
     }
 
     @Override
@@ -50,6 +73,26 @@ final class WorldRegionSource implements ChunkSource {
     boolean hasSkyLight() { return hasSkyLight; }
     PalettedContainerFactory containerFactory() { return containerFactory; }
     RegistryAccess registryAccess() { return registryAccess; }
+
+    /**
+     * Replaces the world's Paper anti-xray hidden blocks with the stone Paper's HIDE mode uses, in every section
+     * below the anti-xray max block height. Each section owns a distinct range of the chunk palette, so the
+     * replacement never leaks between sections; it hides exposed ores as well, which is harmless for terrain the
+     * player only sees from afar.
+     */
+    void hideAntiXrayBlocks(SavedChunk saved) {
+        if (antiXrayHidden.isEmpty()) return;
+        BlockState[] palette = saved.blockPalette();
+        for (int y = minSectionY; y <= maxSectionY && y << 4 < antiXrayMaxBlockY; y++) {
+            SavedChunk.Section section = saved.section(y);
+            if (section == null || section.blockPaletteCount() <= 0) continue;
+            BlockState replacement = y < 0 ? antiXrayReplacementBelowZero : antiXrayReplacement;
+            int end = section.blockPaletteFrom() + section.blockPaletteCount();
+            for (int i = section.blockPaletteFrom(); i < end; i++) {
+                if (antiXrayHidden.contains(palette[i].getBlock())) palette[i] = replacement;
+            }
+        }
+    }
 
     @Override
     public PreparedChunk read(int chunkX, int chunkZ, BlockEntityPolicy blockEntities, boolean requireSavedLight,

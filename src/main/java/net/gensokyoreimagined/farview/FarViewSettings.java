@@ -94,8 +94,9 @@ public record FarViewSettings(boolean enabled, Set<String> worlds, boolean world
           + "distance and never loads these chunks.\n"
           + "Limitations: fake chunks are a disk snapshot, so they carry no entities and no "
           + "block updates until the player walks into the real view distance. Only terrain "
-          + "that is already generated, saved, and lit is shown. Paper anti-xray does not "
-          + "apply to them. Players must also raise their own client render distance.");
+          + "that is already generated, saved, and lit is shown. On 26.2 and 26.3 the world's Paper "
+          + "anti-xray hidden blocks are replaced with stone in them (all of them, exposed or not); "
+          + "older versions send them unmasked. Players must also raise their own client render distance.");
 
         farview.node("enabled").set(Defaults.ENABLED);
         farview.node("worlds").setList(String.class, Defaults.WORLDS)

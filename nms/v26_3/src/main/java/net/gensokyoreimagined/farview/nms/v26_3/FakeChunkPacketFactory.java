@@ -66,6 +66,7 @@ final class FakeChunkPacketFactory {
 
     static PreparedChunk prepare(WorldRegionSource source, int chunkX, int chunkZ, SavedChunk saved,
                                  boolean cullSections) {
+        source.hideAntiXrayBlocks(saved);
         RegistryFriendlyByteBuf out = new RegistryFriendlyByteBuf(scratch(PACKET_SCRATCH), source.registryAccess());
         out.writeInt(chunkX);
         out.writeInt(chunkZ);
