@@ -65,6 +65,9 @@ final class FarViewSession implements SessionHooks {
     private final LongOpenHashSet building = new LongOpenHashSet();
     private final LongArrayList pending = new LongArrayList();
     private int cursor;
+    private final LongArrayList candidates = new LongArrayList();
+    private long[] order = new long[256];
+    private long[] scratch = new long[256];
 
     private boolean culling;
     private double eyeX;
@@ -221,27 +224,62 @@ final class FarViewSession implements SessionHooks {
 
         if (culling) trace();
 
+        // New chunks go out nearest first, before any resend: while the player moves, holes in the ring cost more
+        // than sections a chunk already on the client is still missing. Resends then also go nearest first.
         int builds = Math.min(settings.chunksPerTick(), settings.maxInFlight() - inFlight.get());
-        LongIterator again = resend.iterator();
-        while (builds > 0 && again.hasNext() && quality.hasTokens()) {
-            long key = again.nextLong();
-            if (building.contains(key)) continue;
-            again.remove();
-            if (!sent.containsKey(key)) continue;
-            build(key, realSections(key, sent.get(key)));
-            builds--;
-        }
-
+        candidates.clear();
         ObjectIterator<Long2IntMap.Entry> waiting = ready.long2IntEntrySet().fastIterator();
-        while (builds > 0 && waiting.hasNext() && quality.hasTokens()) {
+        while (waiting.hasNext()) {
             Long2IntMap.Entry entry = waiting.next();
             long key = entry.getLongKey();
             if (building.contains(key)) continue;
             if (culling && !tracedSince(key, entry.getIntValue())) continue;
-            waiting.remove();
+            candidates.add(key);
+        }
+        int next = 0;
+        int count = sortNearest(candidates);
+        while (builds > 0 && next < count && quality.hasTokens()) {
+            long key = candidates.getLong(next++);
+            ready.remove(key);
             build(key, realSections(key, null));
             builds--;
         }
+        if (next < count) return;
+
+        candidates.clear();
+        LongIterator again = resend.iterator();
+        while (again.hasNext()) {
+            long key = again.nextLong();
+            if (!building.contains(key)) candidates.add(key);
+        }
+        next = 0;
+        count = sortNearest(candidates);
+        while (builds > 0 && next < count && quality.hasTokens()) {
+            long key = candidates.getLong(next++);
+            resend.remove(key);
+            if (!sent.containsKey(key)) continue;
+            build(key, realSections(key, sent.get(key)));
+            builds--;
+        }
+    }
+
+    // Sorts keys by squared distance to the current center, nearest first, and returns their count.
+    private int sortNearest(LongArrayList keys) {
+        int count = keys.size();
+        if (count < 2) return count;
+        if (order.length < count) order = new long[Math.max(count, order.length * 2)];
+        for (int i = 0; i < count; i++) {
+            long key = keys.getLong(i);
+            long dx = chunkX(key) - centerX;
+            long dz = chunkZ(key) - centerZ;
+            order[i] = ((dx * dx + dz * dz) << 32) | i;
+        }
+        java.util.Arrays.sort(order, 0, count);
+        long[] sorted = keys.elements();
+        if (scratch.length < count) scratch = new long[sorted.length];
+        for (int i = 0; i < count; i++) scratch[i] = sorted[(int) order[i]];
+        System.arraycopy(scratch, 0, sorted, 0, count);
+        return count;
     }
 
     private void build(long key, long[] realSections) {
