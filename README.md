@@ -10,6 +10,8 @@ It is on for every player by default at `default-view-distance` (16), capped at 
 
 Per-player send rate adapts to measured ping, jitter and netty backpressure, or a player can pin a fixed speed.
 
+While a fake chunk packet, or the forget packet for a fake chunk, is written, the player's netty channel carries the attribute `farview:fake-send` = `true` (`AttributeKey.valueOf("farview:fake-send")`). Packet listeners such as anticheats can check it and skip these packets; the CoralMC GrimAC fork does. Forgets for real server chunks the client was allowed to keep are not marked, since listeners still hold those chunks.
+
 [My Discord Corner](https://discord.gg/ravecxMMNW)
 
 ## Commands

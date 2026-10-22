@@ -2,6 +2,8 @@ package net.gensokyoreimagined.farview;
 
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.util.Attribute;
+import io.netty.util.AttributeKey;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
@@ -29,6 +31,9 @@ final class FarViewSession implements SessionHooks {
     private static final double RETRACE_DISTANCE_SQ = 1.0;
     private static final long RETRACE_NANOS = 100_000_000L;
     private static final long[] ALL_SECTIONS = {-1L, -1L, -1L, -1L};
+    // Set on the channel while a fake chunk (or the forget of one) is written, so packet listeners
+    // further down the pipeline such as GrimAC can skip it. Shared by name across plugin class loaders.
+    private static final AttributeKey<Boolean> FAKE_SEND = AttributeKey.valueOf("farview:fake-send");
     private static final int MAX_WIDTH = FarViewSettings.CLIENT_MAX_VIEW_DISTANCE * 2 + 1;
 
     private final Player player;
@@ -51,6 +56,9 @@ final class FarViewSession implements SessionHooks {
     private final LongOpenHashSet serverChunks = new LongOpenHashSet();
     private final LongOpenHashSet attempted = new LongOpenHashSet();
     private final Long2ObjectOpenHashMap<long[]> sent = new Long2ObjectOpenHashMap<>();
+    // Server chunks kept on the client past the server's (swallowed) forget; listeners still hold their
+    // real data, so the forget farview eventually sends for them is not marked fake.
+    private final LongOpenHashSet retained = new LongOpenHashSet();
     private final Long2ObjectOpenHashMap<short[]> faces = new Long2ObjectOpenHashMap<>();
     private final Long2IntOpenHashMap ready = new Long2IntOpenHashMap();
     private final LongOpenHashSet resend = new LongOpenHashSet();
@@ -166,6 +174,7 @@ final class FarViewSession implements SessionHooks {
         serverChunks.add(key);
         attempted.remove(key);
         sent.remove(key);
+        retained.remove(key);
         ready.remove(key);
         resend.remove(key);
     }
@@ -180,6 +189,7 @@ final class FarViewSession implements SessionHooks {
         }
         attempted.add(key);
         sent.put(key, ALL_SECTIONS);
+        retained.add(key);
         return true;
     }
 
@@ -354,7 +364,8 @@ final class FarViewSession implements SessionHooks {
     void sendChunk(long key, Object packet, long[] realSections) {
         execute(() -> {
             building.remove(key);
-            if (ctx == null || !active || serverChunks.contains(key)
+            ChannelHandlerContext current = ctx;
+            if (current == null || !active || serverChunks.contains(key)
                 || outsideRing(chunkX(key), chunkZ(key))) return;
             long[] had = sent.get(key);
             if (had != null) {
@@ -362,7 +373,10 @@ final class FarViewSession implements SessionHooks {
             }
             sent.put(key, realSections);
             quality.onChunkSent();
-            send(packet);
+            if (channel.isActive()) {
+                writeFake(current, packet, true);
+                current.flush();
+            }
             if (reveals(key, realSections)) resend.add(key);
         });
     }
@@ -376,10 +390,25 @@ final class FarViewSession implements SessionHooks {
             long key = it.next().getLongKey();
             if (!all && !outsideRing(chunkX(key), chunkZ(key))) continue;
             it.remove();
-            current.write(plugin.nms().forgetChunkPacket(chunkX(key), chunkZ(key)), current.voidPromise());
+            writeFake(current, plugin.nms().forgetChunkPacket(chunkX(key), chunkZ(key)), !retained.remove(key));
             wrote = true;
         }
         if (wrote) current.flush();
+    }
+
+    // Event loop only: the marker must cover the whole synchronous outbound encode of this write.
+    private void writeFake(ChannelHandlerContext current, Object packet, boolean fake) {
+        if (!fake) {
+            current.write(packet, current.voidPromise());
+            return;
+        }
+        Attribute<Boolean> marker = channel.attr(FAKE_SEND);
+        marker.set(Boolean.TRUE);
+        try {
+            current.write(packet, current.voidPromise());
+        } finally {
+            marker.set(null);
+        }
     }
 
     private boolean outsideRing(int chunkX, int chunkZ) {
