@@ -5,6 +5,8 @@ import io.netty.channel.ChannelPipeline;
 import net.gensokyoreimagined.farview.nms.FarViewNms;
 import org.bukkit.entity.Player;
 
+import java.util.NoSuchElementException;
+
 final class FarViewInjector {
     private FarViewInjector() {}
 
@@ -26,7 +28,11 @@ final class FarViewInjector {
     static void uninject(FarViewPlugin plugin, Player player) {
         ChannelPipeline pipeline = plugin.nms().channel(player).pipeline();
         for (String name : new String[] { FarViewNms.OUTBOUND_HANDLER, FarViewNms.INBOUND_HANDLER, FarViewWireMeter.NAME }) {
-            if (pipeline.context(name) != null) pipeline.remove(name);
+            // A closing channel tears its pipeline down on the event loop, so the handler can vanish at any moment.
+            try {
+                pipeline.remove(name);
+            } catch (NoSuchElementException ignored) {
+            }
         }
     }
 }

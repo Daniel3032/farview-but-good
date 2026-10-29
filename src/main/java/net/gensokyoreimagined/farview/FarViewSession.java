@@ -232,6 +232,13 @@ final class FarViewSession implements SessionHooks {
         while (waiting.hasNext()) {
             Long2IntMap.Entry entry = waiting.next();
             long key = entry.getLongKey();
+            // The center moved since the read: the server sends this chunk now. Forget the read so a later rebuild
+            // can fetch it again if the player moves away before the real chunk arrives.
+            if (serverSends(chunkX(key), chunkZ(key))) {
+                waiting.remove();
+                attempted.remove(key);
+                continue;
+            }
             if (building.contains(key)) continue;
             if (culling && !tracedSince(key, entry.getIntValue())) continue;
             candidates.add(key);
@@ -250,6 +257,10 @@ final class FarViewSession implements SessionHooks {
         LongIterator again = resend.iterator();
         while (again.hasNext()) {
             long key = again.nextLong();
+            if (serverSends(chunkX(key), chunkZ(key))) {
+                again.remove();
+                continue;
+            }
             if (!building.contains(key)) candidates.add(key);
         }
         next = 0;
@@ -405,6 +416,10 @@ final class FarViewSession implements SessionHooks {
             ChannelHandlerContext current = ctx;
             if (current == null || !active || serverChunks.contains(key)
                 || outsideRing(chunkX(key), chunkZ(key))) return;
+            if (serverSends(chunkX(key), chunkZ(key))) {
+                if (!sent.containsKey(key)) attempted.remove(key);
+                return;
+            }
             long[] had = sent.get(key);
             if (had != null) {
                 for (int word = 0; word < realSections.length; word++) realSections[word] |= had[word];
